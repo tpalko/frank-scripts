@@ -17,6 +17,8 @@ the script will produce something like
 
 providing the portion outlined above.
 
-The free space display is coded into the script, and could be driven with some config file.
+Weather is courtesy of https://www.weatherapi.com/.
 
 The `VOL` value is from amixer but is read from a call to another script in this repository `vol`, which provides support not only for reading this value but also for spectrwm key mappings to control the system volume.
+
+The free space display is coded into the script, but the script should probably be driven with some config file instead.

@@ -26,6 +26,7 @@ function init() {
   set_card_value LFE 0%
   set_card_value PCM 100%
   set_card_value Master 100%
+  set_card_value Headphone on
 }
 
 function reset() {
@@ -100,6 +101,7 @@ function write_audio_settings {
 set -e 
 
 function load_current() {
+  [[ -f ~/.customaudio ]] || write_audio_settings speakers
   CUSTOM_AUDIO=$(cat ~/.customaudio)
 }
 
@@ -107,7 +109,9 @@ function load_current() {
 
 VERBOSE=0
 ACTION=
-CARD=2
+SUBACTION=
+#CARD=3
+CARD=$(pactl -f json list cards | jq -r ".[] | .properties | select(.[\"device.product.name\"] == \"Family 17h/19h HD Audio Controller\") | .[\"api.alsa.card\"]")
 
 while [[ $# -gt 0 ]]; do 
   case $1 in 
