@@ -111,7 +111,7 @@ VERBOSE=0
 ACTION=
 SUBACTION=
 #CARD=3
-CARD=$(pactl -f json list cards | jq -r ".[] | .properties | select(.[\"device.product.name\"] == \"Family 17h/19h HD Audio Controller\") | .[\"api.alsa.card\"]")
+CARD=$(pactl -f json list cards | jq -r ".[] | .properties | select(.[\"device.product.name\"] == \"Family 17h/19h/1ah HD Audio Controller\") | .[\"alsa.card\"]")
 
 while [[ $# -gt 0 ]]; do 
   case $1 in 

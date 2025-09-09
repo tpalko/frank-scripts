@@ -8,7 +8,7 @@ for FOLD in src/*; do
       FILE=${FILE#${FOLD}/}      
       [[ ${FILE} = "install.sh" ]] && continue 
       LINKED_FILE=/usr/local/bin/${FILE%.sh}
-      sudo ln -svf ${PWD}/${FOLD}/${FILE} ${LINKED_FILE}
+      ln -svf ${PWD}/${FOLD}/${FILE} ${LINKED_FILE}
     done
   fi 
 done
