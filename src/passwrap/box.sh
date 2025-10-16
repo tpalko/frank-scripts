@@ -1,14 +1,11 @@
 #!/bin/bash 
 
-
-# state machine:
-# named folder --> archive (intermittent/failed state) --> encrypted archive --> named folder 
-# each 'if' block represents one move '-->'
-# the first two moves set MODE=boxing
-# MODE=boxing blocks the third move (script must start with 'encrypted archive' in order to moved to 'named folder')
+set -e
+# set -x
 
 export SAVE_BAK=0
 export INTERACTIVE=1
+export VERBOSE=0
 
 while [[ $# -gt 0 ]]; do 
   case $1 in
@@ -18,6 +15,9 @@ while [[ $# -gt 0 ]]; do
     -s) SAVE_BAK=1
         shift
         ;;
+    -v) VERBOSE=1
+        shift 
+        ;;
      *) NAME=$1
         shift 
         ;;
@@ -26,82 +26,123 @@ done
 
 [[ -z "${NAME}" ]] && echo "no NAME given" && exit 1
 
-UNIX_TIMESTAMP=$(date +%s)
-BAK=.${NAME}_${UNIX_TIMESTAMP}
-FILENAME=box_${NAME}
-MODE=
-[[ ${INTERACTIVE} -eq 0 ]] && ASSUME_YES="--yes" || ASSUME_YES=
+NOW=$(date)
+HUMAN_TIMESTAMP=$(date -d "${NOW}" +%Y%m%dT%H%M%S)
+UNIX_TIMESTAMP=$(date -d "${NOW}" +%s)
+BAK_FOLDER=.${NAME}
+ARCHIVE_FILENAME=${NAME}.tar.gz
+ENCRYPTED_FILENAME=${NAME}.tar.gz.gpg
+
+FLAGS=""
+GPG_FLAGS=""
+
+if [[ ${INTERACTIVE} -eq 0 ]]; then 
+  GPG_FLAGS="${GPG_FLAGS} --yes"
+fi 
+
+if [[ ${VERBOSE} -eq 1 ]]; then 
+  FLAGS="${FLAGS} -v"
+  GPG_FLAGS="${GPG_FLAGS} -v"
+else 
+  GPG_FLAGS="${GPG_FLAGS} -q"
+fi 
+
+if [[ ${VERBOSE} -eq 1 ]]; then 
+  echo "GPG_FLAGS=${GPG_FLAGS}"
+  echo "FLAGS=${FLAGS}"
+fi 
 
 function confirm() {
+  local MSG="$1"
   [[ ${INTERACTIVE} -eq 0 ]] && return 0
+  [[ -n ${MSG} ]] && echo "${MSG}"
   echo -n "ok? y/N "
   read OK
-  [[ "${OK}" != "y" ]] && echo "Not OK!" && return 1 || return 0
+  [[ $OK =~ y|Y ]]
 }
 
-# -- if the named folder exists pack it up
-if [[ -d "${NAME}" ]]; then 
-  MODE=boxing
-  echo "Found folder ${NAME}, packing ${NAME}.."
-  # -- archive and remove folder 
-  (
-    tar -czvf ${FILENAME}.tar.gz ${NAME} \
-      && rm -rvf ${NAME}
-  ) || echo "could not archive ${NAME}"  
-fi 
+# NAME=private
+# unpacked folder will always be "private"
+# packed archive will be private.tar.gz.gpg.box.[0-9]+
+# if "private" folder, pack and encrypt to .box.tmp, bump all indexed files to make room for .0, rename .tmp to .0
+# if private.tar.gz, continue to encrypt to .box.tmp, etc.
+# if private.tar.gz.gpg, bump others and rename to .box.0
+# iff all versions are .box.# files do we decrypt and unpack
 
-# -- if the archive file exists, encrypt it
-if [[ -f ${FILENAME}.tar.gz ]]; then 
-  MODE=boxing
+function run() {
+  CMD="$@"
+  ${CMD} || (CAP=$? && echo "Failed" && exit ${CAP})
+}
 
-  # -- an encrypted archive already exists, so we have to move it out of the way 
-  if [[ -f ${FILENAME}.tar.gz.gpg ]]; then 
-    # -- move to backup folder if we're saving backups
-    if [[ ${SAVE_BAK} -ne 0 ]]; then 
-      # -- if we're saving backups, make the backup folder 
-      mkdir -vp ${BAK}      
-      mv -v ${FILENAME}.tar.gz.gpg ${BAK}/${FILENAME}.tar.gz.gpg.${UNIX_TIMESTAMP}
-      echo "saved off existing .tar.gz.gpg to .tar.gz.gpg.${UNIX_TIMESTAMP} (SAVE_BAK=${SAVE_BAK})"
-    else 
-      echo "not saving off existing .tar.gz.gpg, will attempt to overwrite (SAVE_BAK=${SAVE_BAK})"
-      confirm || exit 1
-    fi 
+function log() {
+  local MSG="$1"
+  if [[ ${VERBOSE} -eq 1 ]]; then
+    echo "${MSG}"
   fi 
+}
 
-  # -- on successful encryption, move everything else to the backup folder or delete it
-  (
-    [[ ${SAVE_BAK} -eq 0 ]] \
-      && echo "not saving archive after encryption" \
-      && confirm
-  ) \
-    || [[ ${SAVE_BAK} -ne 0 ]] \
-    && gpg ${ASSUME_YES} -e -u ${USER} -r ${USER} ${FILENAME}.tar.gz \
-    && (
-      (
-        [[ ${SAVE_BAK} -ne 0 ]] \
-          && mkdir -vp ${BAK} \
-          && mv -v ${FILENAME}.tar.gz ${BAK}/${FILENAME}.tar.gz.${UNIX_TIMESTAMP}
-      ) \
-        || (
-          echo "not saving original folder or any leftover archives (SAVE_BAK=${SAVE_BAK})" \
-            && rm -v ${FILENAME}.tar.gz
-        )
-    ) \
-        || (
-          echo "user aborted encryption of ${FILENAME}.tar.gz or it simply failed"
-        )
+function cleanup() {
+  OBJ="$1"
+  if [[ ${SAVE_BAK} -eq 1 ]]; then
+    run mkdir -p ${FLAGS} ${BAK_FOLDER}
+    run mv -n ${FLAGS} ${OBJ} ${BAK_FOLDER}/${OBJ}.${UNIX_TIMESTAMP}
+  else 
+    rm -rf ${FLAGS} ${OBJ}
+  fi 
+}
+
+# -- accepts filename.tar.gz.gpg, no residue
+function box_archive() {
+  OBJ="$1"
+  STAT_DATE=$(date -d $(stat ${OBJ} | grep Modify | awk '{ print $2"T"$3 }') +%Y%m%dT%H%M%S)
+  run mv -n ${FLAGS} ${OBJ} ${OBJ}.${STAT_DATE}.box
+  echo "${OBJ}.${STAT_DATE}.box created"
+}
+
+# -- accepts filename.tar.gz
+function encrypt_archive() {
+  OBJ="$1"
+  log "encrypting ${OBJ}"
+  run gpg ${GPG_FLAGS} -e -u ${USER} -r ${USER} ${OBJ}
+  cleanup ${OBJ}
+  box_archive ${OBJ}.gpg
+}
+
+# -- accepts filename folder
+function archive_folder() {
+  OBJ="$1"
+  run tar ${FLAGS} --verify -cf ${OBJ}.tar ${OBJ}
+  run gzip ${FLAGS} ${OBJ}.tar
+  run gzip -t ${FLAGS} ${ARCHIVE_FILENAME}
+  cleanup ${OBJ}
+  encrypt_archive ${ARCHIVE_FILENAME}
+}
+
+if [[ -f ${ENCRYPTED_FILENAME} ]]; then 
+  box_archive ${ENCRYPTED_FILENAME}
+  exit 0
 fi 
 
-# -- if the previous steps haven't been packing things up, unpack the encrypted archive 
-if [[ -z "${MODE}" ]]; then 
-  if [[ -f ${FILENAME}.tar.gz.gpg ]]; then 
-    if [[ ! -d ${NAME} ]]; then 
-      echo "decrypting and extracting ${FILENAME}.tar.gz.gpg.."
-      gpg ${ASSUME_YES} -d ${FILENAME}.tar.gz.gpg | tar -xzv
-    else 
-      echo "would unpack ${FILENAME}.tar.gz.gpg except folder ${NAME} is in the way"
-    fi 
-  else
-    echo "neither folder ${NAME} nor file ${FILENAME}.tar.gz.gpg exist" && exit 1
-  fi
+if [[ -f ${ARCHIVE_FILENAME} ]]; then 
+  encrypt_archive ${ARCHIVE_FILENAME}
+  exit 0
+fi 
+
+if [[ -d ${NAME} ]]; then 
+  archive_folder ${NAME}
+  exit 0
+fi 
+
+LAST_BOXFILE=$(find . -path "./${NAME}.tar.gz.gpg.[0-9T]*.box" | sort -n -r | head -n 1)
+
+if [[ -n ${LAST_BOXFILE} ]]; then 
+
+  confirm "extract ${LAST_BOXFILE}?"
+  run gpg ${GPG_FLAGS} -d ${LAST_BOXFILE} | tar -xz ${FLAGS}
+  echo "${LAST_BOXFILE} unboxed"
+
+else 
+
+  echo "no boxfiles found"
+
 fi 

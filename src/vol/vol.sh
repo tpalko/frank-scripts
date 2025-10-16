@@ -115,7 +115,8 @@ ACTION=
 SUBACTION=
 #CARD=3
 #DEVICE_PRODUCT_NAME="Family 17h/19h/1ah HD Audio Controller"
-DEVICE_PRODUCT_NAME="Sunrise Point-LP HD Audio"
+#DEVICE_PRODUCT_NAME="Sunrise Point-LP HD Audio"
+DEVICE_PRODUCT_NAME="Starship/Matisse HD Audio Controller"
 CARD=$(pactl -f json list cards | jq -r ".[] | .properties | select(.[\"device.product.name\"] == \"${DEVICE_PRODUCT_NAME}\") | .[\"alsa.card\"]")
 
 while [[ $# -gt 0 ]]; do 
