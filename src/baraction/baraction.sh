@@ -37,7 +37,7 @@ function get_raid_status() {
     done < <(cat ~/.bar-raidstatus | jq -r ".devices | .[] | .device+\" \"+.status")    
     echo -n "${STATUS}"
   else 
-    echo "no raid status"
+    echo ""
   fi 
 }
 
@@ -64,9 +64,11 @@ function get_disk() {
   if [[ -f ${OUTPUT_FILE} ]]; then 
     # - get the most recent statistics, and for all dm* disks, sort by throughput, reverse it, and take the top WATCH_DEVICES
     RESULTS=$(cat ${OUTPUT_FILE} | jq -j ".sysstat.hosts | .[] | .statistics | .[-1] | .disk | [.[] | select(.disk_device | startswith(\"dm\"))] | sort_by(.tps) | reverse | .[0:${WATCH_DEVICES}] | .[] | (.disk_device,\":\",.tps,\"\n\")" 2>/dev/null)
-    [[ -n "${RESULTS}" ]] && FORMATTED_RESULTS=$(echo "${RESULTS}" | sed 's/^.*-//' | tr '\n' ' ') && echo ${FORMATTED_RESULTS%% } || echo "+"
+    [[ -n "${RESULTS}" ]] \
+      && FORMATTED_RESULTS=$(echo "${RESULTS}" | sed 's/^.*-//' | tr '\n' ' ') \
+      && echo ${FORMATTED_RESULTS%% } || echo "+"
   else 
-    echo "-"
+    echo "- "
   fi 
 }
 
@@ -74,7 +76,7 @@ function get_users() {
   SESSIONS=$(loginctl --no-pager --no-legend --full list-sessions)
   # SESSION UID USER  SEAT  TTY
   OUTPUT=$(echo ${SESSIONS} | awk '{ print $3 }' | tr '\n' ',')
-  echo ${OUTPUT%%,}
+  echo "${OUTPUT%%,} "
 }
 
 function set_raid_status() {
@@ -86,32 +88,38 @@ function set_raid_status() {
     STATUS=$(cat ~/.bar-raidstatus | jq -r ".status")
   fi 
 
-  if [[ $? -ne 0 || -z "${STATUS}" || ${LAST_UPDATED} -eq -1 || $(( $(date +%s) - ${LAST_UPDATED} )) -gt 300 ]]; then 
+  if [[ $? -ne 0 \
+    || -z "${STATUS}" \
+    || ${LAST_UPDATED} -eq -1 \
+    || $(( $(date +%s) - ${LAST_UPDATED} )) -gt 300 ]]; then 
 
-    DEVICES=$(cat /proc/mdstat | grep -vE "^\s|^$|Personalities|unused devices" | awk '{ print $1 }')
-    
-    OUTFILE="{\"last_updated\":\"$(date +%s)\",\"devices\":["
-    WROTE=0
+    if [[ -f /proc/mdstat ]]; then 
+      
+      DEVICES=$(cat /proc/mdstat | grep -vE "^\s|^$|Personalities|unused devices" | awk '{ print $1 }')
+      
+      OUTFILE="{\"last_updated\":\"$(date +%s)\",\"devices\":["
+      WROTE=0
 
-    while read DEVICE; do 
-      if [[ ${WROTE} -eq 1 ]]; then 
-        OUTFILE="${OUTFILE},"
-      fi 
-      #RAID_STATUS=$(mdadm --detail /dev/md0 | grep -E "^\s+State" | awk '{ $1="";$2=""; print $0 }')
-      DETAIL=$(sudo mdadm --detail /dev/${DEVICE})
-      STATUS=$(echo "${DETAIL}" | grep -E "^\s+State" | awk '{ $1="";$2=""; print $0 }' | xargs)
-      REBUILD_STATUS=$(echo "${DETAIL}" | grep -E "^\s+Rebuild|\s+Resync" | awk '{ print $4 }' | xargs)      
-      OUTFILE="${OUTFILE}{\"device\":\"${DEVICE}\",\"status\":\"${STATUS}"
-      if [[ -n "${REBUILD_STATUS}" ]]; then 
-        OUTFILE="${OUTFILE} ${REBUILD_STATUS}"
-      fi 
-      OUTFILE="${OUTFILE}\"}"
-      WROTE=1
-    done < <(echo "${DEVICES}")
+      while read DEVICE; do 
+        if [[ ${WROTE} -eq 1 ]]; then 
+          OUTFILE="${OUTFILE},"
+        fi 
+        #RAID_STATUS=$(mdadm --detail /dev/md0 | grep -E "^\s+State" | awk '{ $1="";$2=""; print $0 }')
+        DETAIL=$(sudo mdadm --detail /dev/${DEVICE})
+        STATUS=$(echo "${DETAIL}" | grep -E "^\s+State" | awk '{ $1="";$2=""; print $0 }' | xargs)
+        REBUILD_STATUS=$(echo "${DETAIL}" | grep -E "^\s+Rebuild|\s+Resync" | awk '{ print $4 }' | xargs)      
+        OUTFILE="${OUTFILE}{\"device\":\"${DEVICE}\",\"status\":\"${STATUS}"
+        if [[ -n "${REBUILD_STATUS}" ]]; then 
+          OUTFILE="${OUTFILE} ${REBUILD_STATUS}"
+        fi 
+        OUTFILE="${OUTFILE}\"}"
+        WROTE=1
+      done < <(echo "${DEVICES}")
 
-    OUTFILE="${OUTFILE}]}"
+      OUTFILE="${OUTFILE}]}"
 
-    echo ${OUTFILE} > ~/.bar-raidstatus
+      echo ${OUTFILE} > ~/.bar-raidstatus
+    fi 
   fi 
 }
 
@@ -120,8 +128,8 @@ function get_weather() {
     TEMPF="$(cat ~/.weather | jq -r '.current.temp_f')"
     COND=$(cat ~/.weather | jq -r ".current.condition.text")
     QUALITY_INDEX=$(cat ~/.weather | jq -r ".current.air_quality | .\"us-epa-index\"")
-    QUALITY=
-    if [[ $SHELL = /bin/bash ]]; then 
+    QUALITY=$QUALITY_INDEX
+    if [[ $SHELL = /bin/bash || $SHELL = /usr/bin/zsh ]]; then 
       case ${QUALITY_INDEX} in 
         1)  QUALITY=good
             ;;
@@ -152,9 +160,9 @@ function get_weather() {
       #     QUALITY="hazardous"          
       # end
     fi 
-    echo ${TEMPF}F/${COND}/${QUALITY}
+    echo "${TEMPF}F/${COND}/${QUALITY} "
   else 
-    echo "no weather data"
+    echo "no weather data "
   fi 
 }
 
@@ -171,6 +179,9 @@ function set_weather() {
 
 function get_cpu() {
 
+  # old ??
+  # CPU="cpu:$(iostat -o JSON | jq -r '.sysstat.hosts | .[] | .statistics | .[] | .["avg-cpu"] | .idle')"  
+
   local CPU_AGE=1000
   # if [[ -f ~/.baraction-iostat ]]; then 
   #   CPU_AGE=$(( $(date +"%s") - $(date --date $(stat ~/.baraction-iostat | grep Modify | cut -d " " -f2-) +"%s") ))
@@ -185,10 +196,10 @@ function get_cpu() {
 
   local CPU_VAL="\?"
   if [[ -f ~/.baraction-iostat ]]; then 
-    CPU_VAL=$(cat ~/.baraction-iostat | jq -r ".[\"avg-cpu\"] | (.user+.system)")
+    CPU_VAL=$(cat ~/.baraction-iostat | jq -r ".[\"avg-cpu\"] | .user+.system | floor")
   fi 
 
-  echo "cpu:${CPU_VAL}"
+  echo "cpu:${CPU_VAL} "
 }
 
 function den2unit() {
@@ -278,9 +289,87 @@ function human() {
   echo $(( ${FREE} / ${DEN} ))${UNIT}  
 }
 
+function battery() {
+
+  BATT_PERCENT=$(upower -b | grep -iE "percentage" | awk '{ print $2 }')
+  BATT_STATE=$(upower -b | grep -iE "state" | awk '{ print $2 }')
+  BATT_TIME=$(upower -b | grep -iE "time" | awk '{ print $4" "$5 }')
+
+    # state:               discharging
+    # time to empty:       2.0 hours
+    # percentage:          94%
+
+  echo "batt:${BATT_PERCENT} ${BATT_STATE}/${BATT_TIME} "
+}
+
+function ram() {
+  echo "mem:$(free -h | grep Mem | awk '{ print $7"\/"$2 }') "
+}
+
+function sound() {
+  # assuming vol is in use 
+  # `vol get` will return a numeric level 
+  # .customaudio will contain either "headphones" or "speakers"
+  CUSTOMAUDIO=$(cat ~/.customaudio) 
+  debugtime
+  echo "vol:$(vol get)${CUSTOMAUDIO::1} "
+}
+
+function ipaddress() {
+  INET=$(ip addr show ${INTERFACE} | grep inet)
+  IPADDRESS=$([[ $INET =~ ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+) ]] \
+    && echo ${BASH_REMATCH[0]})
+  
+  echo "$IPADDRESS "
+}
+
+function network() {
+  NETWORK=""
+  SENDRATE="?"
+  RECEIVERATE="?"
+  if [[ $(groups | grep wheel 2>&1 > /dev/null) -eq 0 ]]; then 
+    #(
+    #  sudo iftop -n -N -B -t -i ${INTERFACE} -s 1 2>/dev/null 1> ~/.baraction-iftop
+    #)&
+    debugtime
+    if [[ -f ~/.baraction-iftop ]]; then 
+      SENDRATE=$(grep "Total send rate" ~/.baraction-iftop | awk '{ print $6 }')
+      RECEIVERATE=$(cat ~/.baraction-iftop | grep "Total receive rate" | awk '{ print $6 }')
+      NETWORK="u${SENDRATE}/d${RECEIVERATE} "
+    # else
+    #   NETWORK=" " #net:fixme "
+    fi 
+  fi 
+
+  echo "${NETWORK}"
+}
+
+function disk_usage() {
+  DISK_INFO=$(iostat -o JSON | jq -r ".sysstat.hosts | .[] | .statistics | .[] | .disk | .[]")
+  
+  SD_INFO=$(echo "${DISK_INFO}" | jq -r "select(.disk_device | startswith(\"sd\"))")
+  SD_READ=$( human $(echo "${SD_INFO}" | jq -r ".kB_read" | paste -sd+ | bc) K)
+  SD_WRITE=$( human $(echo "${SD_INFO}" | jq -r ".kB_wrtn" | paste -sd+ | bc) K)
+  
+  MD_INFO=$(echo "${DISK_INFO}" | jq -r "select(.disk_device | startswith(\"md\"))")
+  MD_READ=$( human $(echo "${MD_INFO}" | jq -r ".kB_read" | paste -sd+ | bc) K)
+  MD_WRITE=$( human $(echo "${MD_INFO}" | jq -r ".kB_wrtn" | paste -sd+ | bc) K)
+  
+  DM_INFO=$(echo "${DISK_INFO}" | jq -r "select(.disk_device | startswith(\"dm\"))")
+  DM_READ=$( human $(echo "${DM_INFO}" | jq -r ".kB_read" | paste -sd+ | bc) K)
+  DM_WRITE=$( human $(echo "${DM_INFO}" | jq -r ".kB_wrtn" | paste -sd+ | bc) K)
+  
+  DISK="disk:[sd:${SD_READ}/${SD_WRITE},md:${MD_READ}/${MD_WRITE},dm:${DM_READ}/${DM_WRITE}]"
+
+  echo "${DISK} "
+}
+
 function space() {
 
-  DRIVE_NUM=5
+  # old ?
+  # SPACE="root:$(space /dev/mapper/frankenux--vg-root--debian) home:$(space /dev/mapper/frankenux--vg-home) flr:$(space /dev/mapper/bigwhouse--vg-floor)"
+
+  DRIVE_NUM=3
   local df_out="$(df -x tmpfs -x squashfs -x overlay -x devtmpfs -T | grep -v Mounted)"
   local name_free_json="$(echo "$df_out" | awk 'function awk_human(size) { 
     free = 1024*size
@@ -333,65 +422,11 @@ function debugtime() {
 function run() {
     
   while :; do
-    debugtime
     set_weather
-    debugtime
     set_raid_status
-    debugtime
-    # assuming vol is in use 
-    # `vol get` will return a numeric level 
-    # .customaudio will contain either "headphones" or "speakers"
-    CUSTOMAUDIO=$(cat ~/.customaudio) 
-    debugtime
-    SOUND="vol:$(vol get)${CUSTOMAUDIO::1}"
-    debugtime
-    IPADDR=$([[ $(ip addr show ${INTERFACE} | grep inet) =~ ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+) ]] && echo ${BASH_REMATCH[0]})  
-    debugtime
-    NETWORK="-"
-    SENDRATE="?"
-    RECEIVERATE="?"
-    if [[ $(groups | grep wheel 2>&1 > /dev/null) -eq 0 ]]; then 
-      #(
-      #  sudo iftop -n -N -B -t -i ${INTERFACE} -s 1 2>/dev/null 1> ~/.baraction-iftop
-      #)&
-      debugtime
-      if [[ -f ~/.baraction-iftop ]]; then 
-        SENDRATE=$(grep "Total send rate" ~/.baraction-iftop | awk '{ print $6 }')
-        RECEIVERATE=$(cat ~/.baraction-iftop | grep "Total receive rate" | awk '{ print $6 }')
-        NETWORK="u${SENDRATE}/d${RECEIVERATE}"
-      else
-        NETWORK="net:fixme"
-      fi 
-    fi 
-    # DISK_INFO=$(iostat -o JSON | jq -r ".sysstat.hosts | .[] | .statistics | .[] | .disk | .[]")
-    # 
-    # SD_INFO=$(echo "${DISK_INFO}" | jq -r "select(.disk_device | startswith(\"sd\"))")
-    # SD_READ=$( human $(echo "${SD_INFO}" | jq -r ".kB_read" | paste -sd+ | bc) K)
-    # SD_WRITE=$( human $(echo "${SD_INFO}" | jq -r ".kB_wrtn" | paste -sd+ | bc) K)
-    # 
-    # MD_INFO=$(echo "${DISK_INFO}" | jq -r "select(.disk_device | startswith(\"md\"))")
-    # MD_READ=$( human $(echo "${MD_INFO}" | jq -r ".kB_read" | paste -sd+ | bc) K)
-    # MD_WRITE=$( human $(echo "${MD_INFO}" | jq -r ".kB_wrtn" | paste -sd+ | bc) K)
-    # 
-    # DM_INFO=$(echo "${DISK_INFO}" | jq -r "select(.disk_device | startswith(\"dm\"))")
-    # DM_READ=$( human $(echo "${DM_INFO}" | jq -r ".kB_read" | paste -sd+ | bc) K)
-    # DM_WRITE=$( human $(echo "${DM_INFO}" | jq -r ".kB_wrtn" | paste -sd+ | bc) K)
-    # 
-    # DISK="disk:[sd:${SD_READ}/${SD_WRITE},md:${MD_READ}/${MD_WRITE},dm:${DM_READ}/${DM_WRITE}]"
-    # debugtime
-    # CPU="cpu:$(iostat -o JSON | jq -r '.sysstat.hosts | .[] | .statistics | .[] | .["avg-cpu"] | .idle')"  
-    debugtime
-    RAM="mem:$(free -h | grep Mem | awk '{ print $7 }')"
-    debugtime
-    SPACE=$(space)
-#    SPACE="root:$(space /dev/mapper/frankenux--vg-root--debian) home:$(space /dev/mapper/frankenux--vg-home) flr:$(space /dev/mapper/bigwhouse--vg-floor)"
-    debugtime
-    # [ $(get_disk) ]
-    echo "$(get_weather) $(get_users) [ $(get_raid_status) ] ${SOUND} ${IPADDR} ${NETWORK} $(get_cpu) ${RAM} ${DISK} ${SPACE}"
+    echo "$(get_weather)$(get_users)$(battery)$(get_raid_status)$(sound)$(ipaddress)$(network)$(get_cpu)$(ram)$(space)"
     sleep 2
-    
   done
-  # 
 }
 
 function setenv() {

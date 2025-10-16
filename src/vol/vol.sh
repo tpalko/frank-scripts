@@ -1,5 +1,8 @@
 #!/bin/bash 
 
+export FS_VOL_SPEAKER_CONTROL="Speaker"
+export FS_VOL_HEADPHONE_CONTROL="Headphone"
+
 function log {
   if [[ ${VERBOSE} -eq 1 ]]; then 
     echo "$1"
@@ -14,19 +17,19 @@ function parse_amixer() {
 function get_vol() {
   log "Getting ${CUSTOM_AUDIO}"
   case ${CUSTOM_AUDIO} in
-    speakers)	  VOL=$(parse_amixer "$(get_card_value Front)");;
-    headphones)	VOL=$(parse_amixer "$(get_card_value Headphone)");;
+    speakers)	  VOL=$(parse_amixer "$(get_card_value ${FS_VOL_SPEAKER_CONTROL})");;
+    headphones)	VOL=$(parse_amixer "$(get_card_value ${FS_VOL_HEADPHONE_CONTROL})");;
     *)	        echo "No audio setting: ${CUSTOM_AUDIO}";;
   esac 
 }
 
 function init() {
-  set_card_value Surround 0%
-  set_card_value Center 0%
-  set_card_value LFE 0%
+  #set_card_value Surround 0%
+  #set_card_value Center 0%
+  #set_card_value LFE 0%
   set_card_value PCM 100%
   set_card_value Master 100%
-  set_card_value Headphone on
+  set_card_value ${FS_VOL_HEADPHONE_CONTROL} on
 }
 
 function reset() {
@@ -34,15 +37,15 @@ function reset() {
   TO_VOL=$1
   
   if [[ -z "${TO_VOL}" ]]; then 
-    set_card_value Front 0%
-    set_card_value Headphone 0%
+    set_card_value ${FS_VOL_SPEAKER_CONTROL} 0%
+    set_card_value ${FS_VOL_HEADPHONE_CONTROL} 0%
   else
     case ${CUSTOM_AUDIO} in 
-      speakers)   set_card_value Front ${TO_VOL}%
-                  set_card_value Headphone 0%
+      speakers)   set_card_value ${FS_VOL_SPEAKER_CONTROL} ${TO_VOL}%
+                  set_card_value ${FS_VOL_HEADPHONE_CONTROL} 0%
                   ;;
-     headphones)  set_card_value Headphone ${TO_VOL}%
-                  set_card_value Front 0%
+     headphones)  set_card_value ${FS_VOL_HEADPHONE_CONTROL} ${TO_VOL}%
+                  set_card_value ${FS_VOL_SPEAKER_CONTROL} 0%
                   ;;
     esac 
   fi 
@@ -53,9 +56,9 @@ function set_vol() {
   TO_VOL=$(( ${VOL} + ${CHANGE} ))
   log "Setting ${CUSTOM_AUDIO} to ${TO_VOL}%"
   case ${CUSTOM_AUDIO} in
-    speakers)   set_card_value Front ${TO_VOL}%
+    speakers)   set_card_value ${FS_VOL_SPEAKER_CONTROL} ${TO_VOL}%
                 ;;
-    headphones)	set_card_value Headphone ${TO_VOL}%
+    headphones)	set_card_value ${FS_VOL_HEADPHONE_CONTROL} ${TO_VOL}%
                 ;;
 		
     *)		echo "No audio setting: ${CUSTOM_AUDIO}";;
@@ -111,7 +114,9 @@ VERBOSE=0
 ACTION=
 SUBACTION=
 #CARD=3
-CARD=$(pactl -f json list cards | jq -r ".[] | .properties | select(.[\"device.product.name\"] == \"Family 17h/19h/1ah HD Audio Controller\") | .[\"alsa.card\"]")
+#DEVICE_PRODUCT_NAME="Family 17h/19h/1ah HD Audio Controller"
+DEVICE_PRODUCT_NAME="Sunrise Point-LP HD Audio"
+CARD=$(pactl -f json list cards | jq -r ".[] | .properties | select(.[\"device.product.name\"] == \"${DEVICE_PRODUCT_NAME}\") | .[\"alsa.card\"]")
 
 while [[ $# -gt 0 ]]; do 
   case $1 in 
