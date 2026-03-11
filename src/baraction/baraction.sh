@@ -25,33 +25,44 @@ function get_minikube_status() {
 }
 
 function get_raid_status() {
-  if [[ -f ~/.bar-raidstatus ]]; then 
+  if [[ -s ~/.baraction-raidstatus ]]; then 
     STATUS=
     WROTE=0
     while read DEV; do 
       if [[ ${WROTE} -eq 1 ]]; then 
-        STATUS="${STATUS}; "
+        STATUS="${STATUS} "
       fi 
       STATUS="${STATUS}${DEV}"
       WROTE=1
-    done < <(cat ~/.bar-raidstatus | jq -r ".devices | .[] | .device+\" \"+.status")    
-    echo -n "${STATUS}"
+    done < <(cat ~/.baraction-raidstatus | jq -r ".devices | .[] | .device+\" \"+.size+\" \"+.status")    
+    echo -n "[${STATUS}] "
   else 
     echo ""
   fi 
 }
 
+function is_current() {
+  local FILE=$1
+  export CURRENT_MINUTES=$2
+
+  AGE=$(( $(date +%s) - $(stat ${FILE} -c "%Y") ))
+  TEST_TIME=$(python3 -c "import os; min = os.getenv('CURRENT_MINUTES'); print(f'{(60*float(min)):.0f}')")
+
+  [[ -s ${FILE} && ${AGE} -lt ${TEST_TIME} ]]
+}
+
 function get_disk() {
 
-  export MINUTES=.5
+  MINUTES=.5
   IOSTAT_INTERVAL=5
   IOSTAT_COUNT=2
   WATCH_DEVICES=4
   OUTPUT_FILE=~/.bar-diskactivity
 
-  TEST_TIME=$(python3 -c "import os; min = os.getenv('MINUTES'); print(f'{(60*float(min)):.0f}')")
+  # TEST_TIME=$(python3 -c "import os; min = os.getenv('MINUTES'); print(f'{(60*float(min)):.0f}')")
   
-  if [[ (! -f ${OUTPUT_FILE} || $(( $(date +%s) - $(stat ${OUTPUT_FILE} -c "%Y") )) -gt ${TEST_TIME}) && ! -f ${OUTPUT_FILE}.tmp ]]; then 
+  if ! is_current ${OUTPUT_FILE} ${MINUTES} && [[ ! -f ${OUTPUT_FILE}.tmp ]]; then 
+  # if [[ (! -f ${OUTPUT_FILE} || $(( $(date +%s) - $(stat ${OUTPUT_FILE} -c "%Y") )) -gt ${TEST_TIME}) && ! -f ${OUTPUT_FILE}.tmp ]]; then 
     ( iostat -j ID -d --dec=0 -o JSON ${IOSTAT_INTERVAL} ${IOSTAT_COUNT} > ${OUTPUT_FILE}.tmp )&
   fi 
 
@@ -83,51 +94,73 @@ function set_raid_status() {
 
   LAST_UPDATED=-1 
   STATUS=
-  if [[ -f ~/.bar-raidstatus ]]; then 
-    LAST_UPDATED=$(cat ~/.bar-raidstatus | jq -r ".last_updated")
-    STATUS=$(cat ~/.bar-raidstatus | jq -r ".status")
+  if [[ -f ~/.baraction-raidstatus ]]; then 
+    LAST_UPDATED=$(cat ~/.baraction-raidstatus | jq -r ".last_updated")
   fi 
 
   if [[ $? -ne 0 \
-    || -z "${STATUS}" \
     || ${LAST_UPDATED} -eq -1 \
-    || $(( $(date +%s) - ${LAST_UPDATED} )) -gt 300 ]]; then 
+    || $(( $(date +%s) - ${LAST_UPDATED} )) -gt 5 ]]; then 
 
     if [[ -f /proc/mdstat ]]; then 
       
-      DEVICES=$(cat /proc/mdstat | grep -vE "^\s|^$|Personalities|unused devices" | awk '{ print $1 }')
+      DEVICES=($(cat /proc/mdstat | grep "active" | awk '{ print $1 }'))
       
       OUTFILE="{\"last_updated\":\"$(date +%s)\",\"devices\":["
       WROTE=0
 
-      while read DEVICE; do 
+      for DEVICE in ${DEVICES[@]}; do 
         if [[ ${WROTE} -eq 1 ]]; then 
           OUTFILE="${OUTFILE},"
         fi 
-        #RAID_STATUS=$(mdadm --detail /dev/md0 | grep -E "^\s+State" | awk '{ $1="";$2=""; print $0 }')
-        DETAIL=$(sudo mdadm --detail /dev/${DEVICE})
-        STATUS=$(echo "${DETAIL}" | grep -E "^\s+State" | awk '{ $1="";$2=""; print $0 }' | xargs)
-        REBUILD_STATUS=$(echo "${DETAIL}" | grep -E "^\s+Rebuild|\s+Resync" | awk '{ print $4 }' | xargs)      
-        OUTFILE="${OUTFILE}{\"device\":\"${DEVICE}\",\"status\":\"${STATUS}"
-        if [[ -n "${REBUILD_STATUS}" ]]; then 
-          OUTFILE="${OUTFILE} ${REBUILD_STATUS}"
-        fi 
-        OUTFILE="${OUTFILE}\"}"
+        # -- a syncing array
+        #sync_action: recover
+        #sync_completed: x/y
+        #array_state: clean
+        #state: in_sync
+        # -- a normal array 
+        #sync_action: idle 
+        #sync_completed: none 
+        #array_state: clean 
+        #state: in_sync 
+        #OUTPUT=; for THING in $(find /sys/class/block/md2/md/ -type f); do OUTPUT="${OUTPUT}$(basename $THING): $(cat $THING)\n"; done; printf "${OUTPUT}" | column -t
+        ARRAY_SIZE=$(cat /sys/class/block/$DEVICE/md/component_size)
+        ARRAY_SIZE_HUMAN=$(human $ARRAY_SIZE "K" 1)
+        # - recover or idle
+        SYNC_ACTION=$(cat /sys/class/block/$DEVICE/md/sync_action)
+        ARRAY_STATE=$(cat /sys/class/block/$DEVICE/md/array_state)
+        if [[ -n $SYNC_ACTION && $SYNC_ACTION != idle ]]; then 
+          SYNC_COMPLETED=$(cat /sys/class/block/$DEVICE/md/sync_completed)
+          SYNC_COMPLETED_PERCENT=$(eval "python -c \"print(f'{100*$SYNC_COMPLETED:.1f}')\"")
+          STATUS="${SYNC_ACTION} ${SYNC_COMPLETED_PERCENT}%"
+        else 
+          STATUS=${ARRAY_STATE}
+        fi
+        
+        #DETAIL="$(sudo mdadm --detail /dev/${DEVICE})"
+	      #echo "${DETAIL}" > ~/.baraction-raidstatus-${DEVICE}-$(date +%s)
+#        STATUS=$(echo "${DETAIL}" | grep -E "^\s+State" | awk '{ $1="";$2=""; print $0 }' | xargs)
+	      #STATE="$(echo "${DETAIL}" | grep -E "^\s+State" | sed "s/State\s://" | xargs)"
+        #REBUILD_STATUS="$(echo "${DETAIL}" | grep -E "^\s+Rebuild|\s+Resync" | awk '{ print $4 }' | xargs)"
+        #if [[ -n ${REBUILD_STATUS} ]]; then 
+        #  STATE="${STATE} ${REBUILD_STATUS}"
+        #fi 
+        OUTFILE="${OUTFILE}{\"device\":\"${DEVICE}\",\"size\":\"${ARRAY_SIZE_HUMAN}\",\"status\":\"${STATUS:--}\"}"
         WROTE=1
-      done < <(echo "${DEVICES}")
+      done 
 
       OUTFILE="${OUTFILE}]}"
 
-      echo ${OUTFILE} > ~/.bar-raidstatus
+      echo ${OUTFILE} > ~/.baraction-raidstatus
     fi 
   fi 
 }
 
 function get_weather() {
-  if [[ -f ~/.weather ]]; then 
-    TEMPF="$(cat ~/.weather | jq -r '.current.temp_f')"
-    COND=$(cat ~/.weather | jq -r ".current.condition.text")
-    QUALITY_INDEX=$(cat ~/.weather | jq -r ".current.air_quality | .\"us-epa-index\"")
+  if [[ -f ~/.baraction-weather ]]; then 
+    TEMPF="$(cat ~/.baraction-weather | jq -r '.current.temp_f')"
+    COND=$(cat ~/.baraction-weather | jq -r ".current.condition.text")
+    QUALITY_INDEX=$(cat ~/.baraction-weather | jq -r ".current.air_quality | .\"us-epa-index\"")
     QUALITY=$QUALITY_INDEX
     if [[ $SHELL = /bin/bash || $SHELL = /usr/bin/zsh ]]; then 
       case ${QUALITY_INDEX} in 
@@ -168,12 +201,12 @@ function get_weather() {
 
 function set_weather() {
   LAST_UPDATED=901
-  if [[ -f ~/.weather ]]; then 
-    LAST_UPDATED=$(cat ~/.weather | jq -r ".current.last_updated_epoch")
+  if [[ -f ~/.baraction-weather ]]; then 
+    LAST_UPDATED=$(cat ~/.baraction-weather | jq -r ".current.last_updated_epoch")
   fi 
   # if last updated for whatever reason isn't recent, then update 
   if [[ $? -ne 0 || -z "${LAST_UPDATED}" || $(( $(date +%s) - ${LAST_UPDATED} )) -gt 900 ]]; then 
-    curl -s --url "http://api.weatherapi.com/v1/current.json?key=${WEATHER_KEY}&q=${WEATHER_ZIP}&aqi=yes" -o ~/.weather
+    curl -s --url "http://api.weatherapi.com/v1/current.json?key=${WEATHER_KEY}&q=${WEATHER_ZIP}&aqi=yes" -o ~/.baraction-weather
   fi
 }
 
@@ -188,7 +221,12 @@ function get_cpu() {
   # fi 
 
   if [[ $CPU_AGE -gt 3 ]]; then 
-    (iostat -d 1 1 -y -c -o JSON | jq -r ".sysstat.hosts | .[] | .statistics | .[]" > ~/.baraction-iostat.tmp && mv -f ~/.baraction-iostat.tmp ~/.baraction-iostat)&
+    {
+      iostat -d 1 1 -y -c -o JSON \
+        | jq -r ".sysstat.hosts | .[] | .statistics | .[]" > ~/.baraction-iostat.tmp \
+        && sleep 1 \
+        && mv -f ~/.baraction-iostat.tmp ~/.baraction-iostat
+    } &
   fi 
 
   # 
@@ -268,7 +306,10 @@ function human() {
   
   SIZE=$1
   UNIT=$2
-  
+  UNIT_THRES_DEFAULT=10
+  UNIT_THRES=$3
+  UNIT_THRES=${UNIT_THRES:-${UNIT_THRES_DEFAULT}}
+
   # python -c "import sys; print(\"%.5f\" % (int(sys.argv[1])*1.0 / int(sys.argv[2])*1.0) )" <<< echo 243523 1223
   
   DEN=$(unit2den ${UNIT})
@@ -280,16 +321,22 @@ function human() {
   # display thousands of a lesser unit (7235M, not 7G)
   # -- bytes must be > 10K to be shown in K
   # -- kilobytes must be > 10M to be shown in M
-  while [[ ${FREE} -gt $(( ${DEN} * 1024 * 10 )) ]]; do 
+  while [[ ${FREE} -gt $(( ${DEN} * 1024 * ${UNIT_THRES} )) ]]; do 
     DEN=$(( ${DEN} * 1024 ))
   done 
   
   UNIT=$(den2unit ${DEN})
   
-  echo $(( ${FREE} / ${DEN} ))${UNIT}  
+  REPORT=$(eval "python -c \"print(f'{($FREE / $DEN):.1f}')\"")
+  echo "${REPORT}${UNIT}"
+  # echo $(( ${FREE} / ${DEN} ))${UNIT}  
 }
 
 function battery() {
+
+  if ! command upower 2>/dev/null; then 
+    return 
+  fi 
 
   BATT_PERCENT=$(upower -b | grep -iE "percentage" | awk '{ print $2 }')
   BATT_STATE=$(upower -b | grep -iE "state" | awk '{ print $2 }')
@@ -299,11 +346,13 @@ function battery() {
     # time to empty:       2.0 hours
     # percentage:          94%
 
-  echo "batt:${BATT_PERCENT} ${BATT_STATE}/${BATT_TIME} "
+  if [[ -n ${BATT_PERCENT} || -n ${BATT_STATE} ]]; then 
+    echo "batt:${BATT_PERCENT} ${BATT_STATE}/${BATT_TIME} "
+  fi
 }
 
 function ram() {
-  echo "mem:$(free -h | grep Mem | awk '{ print $7"\/"$2 }') "
+  echo "mem:$(free -h | grep Mem | awk '{ print $7"/"$2 }') "
 }
 
 function sound() {
@@ -312,7 +361,8 @@ function sound() {
   # .customaudio will contain either "headphones" or "speakers"
   CUSTOMAUDIO=$(cat ~/.customaudio) 
   debugtime
-  echo "vol:$(vol get)${CUSTOMAUDIO::1} "
+  VOL_VAL_OUTPUT=$(vol get | sed "s/\([0-9]*\)\(\s*\)\([a-z]\?\)\(.*\)/\1\3/")
+  echo "vol:${VOL_VAL_OUTPUT} "
 }
 
 function ipaddress() {
@@ -344,6 +394,10 @@ function network() {
   echo "${NETWORK}"
 }
 
+function conntrack() {
+  echo -n "$(cat /proc/sys/net/netfilter/nf_conntrack_count) "
+}
+
 function disk_usage() {
   DISK_INFO=$(iostat -o JSON | jq -r ".sysstat.hosts | .[] | .statistics | .[] | .disk | .[]")
   
@@ -370,7 +424,10 @@ function space() {
   # SPACE="root:$(space /dev/mapper/frankenux--vg-root--debian) home:$(space /dev/mapper/frankenux--vg-home) flr:$(space /dev/mapper/bigwhouse--vg-floor)"
 
   DRIVE_NUM=3
-  local df_out="$(df -x tmpfs -x squashfs -x overlay -x devtmpfs -T | grep -v Mounted)"
+  DF_BASE_OUT=$(df -x tmpfs -x squashfs -x overlay -x devtmpfs -T)
+  DF_LINES=$(echo "$DF_BASE_OUT" | wc -l)
+  local df_out="$(echo "$DF_BASE_OUT" | tail -n $(( $DF_LINES - 1 )) | grep -vE '^efivarfs|efi$')"
+  # local df_out="$(df -x tmpfs -x squashfs -x overlay -x devtmpfs -T | grep -v Mounted)"
   local name_free_json="$(echo "$df_out" | awk 'function awk_human(size) { 
     free = 1024*size
     den = 1024
@@ -413,6 +470,16 @@ function space() {
    echo $OUT
 }
 
+function publicip() {
+  if ! is_current ~/.baraction-publicip 30; then 
+    echo < ~/.baraction-publicip > EOF
+$(curl ifconfig.me) | xargs 
+EOF
+  fi 
+
+  cat ~/.baraction-publicip
+}
+
 function debugtime() {
   if [[ ${DEBUG} -eq 1 ]]; then
     date
@@ -424,19 +491,23 @@ function run() {
   while :; do
     set_weather
     set_raid_status
-    echo "$(get_weather)$(get_users)$(battery)$(get_raid_status)$(sound)$(ipaddress)$(network)$(get_cpu)$(ram)$(space)"
+    echo "$(get_weather)$(get_users)$(battery)$(get_raid_status)$(sound)$(ipaddress)$(network)$(conntrack)$(get_cpu)$(ram)$(space)"
     sleep 2
   done
 }
 
 function setenv() {
-  
+
+  export WEATHER_KEY=4ed8498856b8430dbc840941221703
+  export WEATHER_ZIP=15206
+  export INTERFACE=enp42s0
+
   # go check out https://www.weatherapi.com/
   # and fix up .env.example -> .env 
   export DEBUG=${DEBUG:=0}
-  ENV_FILE=$(dirname $(readlink $0))/.env
+  # ENV_FILE=$(dirname $(readlink $0))/.env
   # echo "Exporting ${ENV_FILE}"
-  export $(cat ${ENV_FILE} | xargs)
+  # export $(cat ${ENV_FILE} | xargs)
   # env | sort -n
   export PATH=${PATH}:/home/debian/tpalko/.asdf/bin:/home/debian/tpalko/.asdf/shims 
   export ASDF_DIR=/home/debian/tpalko/.asdf

@@ -28,8 +28,12 @@ echo "Adding $@"
 
 TQS="-thread_queue_size ${THREAD_QUEUE_SIZE}"
 
+INPUT=${DISPLAY:-:0}
+INPUT_OFFSET="+0,0"
+VIDEO_SIZE=$(xdpyinfo | awk '/dimensions/{print $2}')
+
 # -video_size 3840x1080
-CMD="ffmpeg -framerate 30 -f x11grab -video_size 1920,1080 $TQS -i :0.0+0+0 -f pulse $TQS -i 1 ${FILE}"
+CMD="ffmpeg -framerate 30 -f x11grab -video_size "${VIDEO_SIZE}" $TQS -i ${INPUT}${INPUT_OFFSET} -f pulse $TQS -i 0 ${FILE}"
 echo ${CMD}
 
 echo -n "OK? y/N "
